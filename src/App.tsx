@@ -1710,7 +1710,6 @@ function PricingView({
                 <th>Preço de venda</th>
                 <th>Margem R$</th>
                 <th>Margem %</th>
-                <th>Lucro R$</th>
                 <th>Massa Arretada</th>
                 <th>Dantas</th>
                 <th>Farini</th>
@@ -1762,9 +1761,6 @@ function PricingView({
                         })}
                         %
                       </span>
-                    </td>
-                    <td>
-                      <strong>{money(margin)}</strong>
                     </td>
                     {pizza.competitors.map((price, index) => (
                       <td key={index}>
