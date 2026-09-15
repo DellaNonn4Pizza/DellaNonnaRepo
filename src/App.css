@@ -336,6 +336,26 @@
   border-bottom: 1px solid var(--line);
   font-size: 13px;
 }
+.table-search {
+  width: min(250px, 42%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #aaa39a;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fff;
+  padding: 7px 10px;
+}
+.table-search input {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 11px;
+}
+.table-search input::placeholder { color: #aaa39a; }
 .count-badge {
   background: #f0eee9;
   color: #928c82;
@@ -356,7 +376,8 @@
   width: 100%;
   max-width: 100%;
   overflow-x: auto;
-  overflow-y: hidden;
+  max-height: 390px;
+  overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-x: contain;
 }
@@ -375,6 +396,10 @@ th {
   padding: 13px 16px;
   border-bottom: 1px solid var(--line);
   white-space: nowrap;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--paper);
 }
 td {
   padding: 13px 16px;
@@ -459,6 +484,93 @@ td select:focus {
 .row-action:hover,
 .remove-line:hover {
   color: var(--red);
+}
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: #25221e99;
+}
+.ingredient-modal {
+  width: min(100%, 480px);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 18px 55px #25221e2b;
+  padding: 24px;
+}
+.modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 22px;
+}
+.modal-header h3 {
+  margin: 4px 0 0;
+  color: var(--ink);
+  font-family: "Fraunces", Georgia, serif;
+  font-size: 24px;
+  font-weight: 500;
+}
+.modal-close {
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: #aaa39a;
+  padding: 4px;
+}
+.modal-close:hover { color: var(--ink); }
+.ingredient-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 15px;
+}
+.form-field {
+  color: #8e887e;
+  font-size: 10px;
+}
+.form-field-wide { grid-column: span 2; }
+.form-field input,
+.form-field select {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 6px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: #fff;
+  color: var(--ink);
+  padding: 9px 10px;
+  outline: 0;
+  font-size: 12px;
+}
+.form-field input:focus,
+.form-field select:focus { border-color: #d8c0b5; }
+.modal-price-input {
+  display: flex;
+  align-items: center;
+  margin-top: 6px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: #fff;
+  color: #aaa39a;
+  font-size: 11px;
+  padding-left: 10px;
+}
+.modal-price-input input {
+  margin-top: 0;
+  border: 0;
+}
+.modal-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 18px;
+  margin-top: 25px;
 }
 .conversion-card {
   margin-top: 18px;
@@ -1174,8 +1286,11 @@ td select:focus {
   }
   .table-toolbar {
     padding-inline: 12px;
+    gap: 12px;
   }
+  .table-search { width: min(220px, 48%); }
   .autosave {
     display: none;
   }
+  .ingredient-modal { padding: 20px; }
 }

@@ -18,6 +18,8 @@ import {
   Trash2,
   TrendingUp,
   Utensils,
+  Search,
+  X,
 } from "lucide-react";
 import "./App.css";
 
@@ -554,15 +556,10 @@ function App() {
     );
     flashSaved();
   };
-  const addIngredient = async () => {
-    const item = {
+  const addIngredient = async (details: Omit<Ingredient, "id" | "dbId">) => {
+    const item: Ingredient = {
       id: Date.now(),
-      name: "Novo insumo",
-      brand: "",
-      pack: 1,
-      unit: "g" as const,
-      price: 0,
-      category: "insumo" as const,
+      ...details,
     };
     setIngredients((items) => [...items, item]);
     const dbId = await saveIngredientToSupabase(item);
@@ -931,10 +928,38 @@ function IngredientsView({
   setConversion: React.Dispatch<
     React.SetStateAction<{ cebola: number; azeitona: number }>
   >;
-  addIngredient: () => void;
+  addIngredient: (details: Omit<Ingredient, "id" | "dbId">) => Promise<void>;
   addPackaging: () => void;
   deleteIngredient: (ingredient: Ingredient) => void;
 }) {
+  const [searchTerm, setSearchTerm] = useState("");
+  const [isIngredientModalOpen, setIngredientModalOpen] = useState(false);
+  const [ingredientDraft, setIngredientDraft] = useState({
+    name: "",
+    brand: "",
+    pack: "1",
+    unit: "g" as Ingredient["unit"],
+    price: "0",
+  });
+  const filteredIngredients = ingredients.filter((item) => {
+    if (item.category !== "insumo") return false;
+    const query = searchTerm.trim().toLocaleLowerCase();
+    return !query || `${item.name} ${item.brand}`.toLocaleLowerCase().includes(query);
+  });
+  const submitIngredient = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!ingredientDraft.name.trim()) return;
+    await addIngredient({
+      name: ingredientDraft.name.trim(),
+      brand: ingredientDraft.brand.trim(),
+      pack: parseNumber(ingredientDraft.pack),
+      unit: ingredientDraft.unit,
+      price: parseNumber(ingredientDraft.price),
+      category: "insumo",
+    });
+    setIngredientDraft({ name: "", brand: "", pack: "1", unit: "g", price: "0" });
+    setIngredientModalOpen(false);
+  };
   return (
     <section className="page-section">
       <div className="section-intro">
@@ -946,7 +971,7 @@ function IngredientsView({
             automaticamente.
           </p>
         </div>
-        <button className="primary-button" onClick={addIngredient}>
+        <button className="primary-button" onClick={() => setIngredientModalOpen(true)}>
           <Plus size={16} /> Adicionar insumo
         </button>
       </div>
@@ -955,12 +980,18 @@ function IngredientsView({
           <div>
             <strong>Insumos cadastrados</strong>
             <span className="count-badge">
-              {ingredients.filter((item) => item.category === "insumo").length} itens
+              {filteredIngredients.length} itens
             </span>
           </div>
-          <span className="autosave">
-            <span className="live-dot" /> Salvamento automático
-          </span>
+          <label className="table-search">
+            <Search size={14} />
+            <input
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              placeholder="Pesquisar insumo"
+              aria-label="Pesquisar insumo"
+            />
+          </label>
         </div>
         <div className="table-scroll">
           <table>
@@ -976,9 +1007,7 @@ function IngredientsView({
               </tr>
             </thead>
             <tbody>
-              {ingredients
-                .filter((item) => item.category === "insumo")
-                .map((item) => (
+              {filteredIngredients.map((item) => (
                 <tr key={item.id}>
                   <td>
                     <div className="ingredient-name">
@@ -1065,6 +1094,51 @@ function IngredientsView({
           </table>
         </div>
       </div>
+      {isIngredientModalOpen && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setIngredientModalOpen(false)}>
+          <form className="ingredient-modal" onSubmit={submitIngredient} onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <p className="eyebrow orange">NOVO CADASTRO</p>
+                <h3>Adicionar insumo</h3>
+              </div>
+              <button className="modal-close" type="button" onClick={() => setIngredientModalOpen(false)} aria-label="Fechar">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="ingredient-form-grid">
+              <label className="form-field form-field-wide">
+                Nome do insumo
+                <input autoFocus required value={ingredientDraft.name} onChange={(event) => setIngredientDraft({ ...ingredientDraft, name: event.target.value })} placeholder="Ex.: Muçarela" />
+              </label>
+              <label className="form-field form-field-wide">
+                Marca / observação
+                <input value={ingredientDraft.brand} onChange={(event) => setIngredientDraft({ ...ingredientDraft, brand: event.target.value })} placeholder="Opcional" />
+              </label>
+              <label className="form-field">
+                Qtd. da embalagem
+                <input required min="0" type="number" value={ingredientDraft.pack} onChange={(event) => setIngredientDraft({ ...ingredientDraft, pack: event.target.value })} />
+              </label>
+              <label className="form-field">
+                Unidade
+                <select value={ingredientDraft.unit} onChange={(event) => setIngredientDraft({ ...ingredientDraft, unit: event.target.value as Ingredient["unit"] })}>
+                  <option value="g">g</option>
+                  <option value="ml">ml</option>
+                  <option value="unid">unid</option>
+                </select>
+              </label>
+              <label className="form-field form-field-wide">
+                Preço pago
+                <div className="modal-price-input"><span>R$</span><input required min="0" step="0.01" type="number" value={ingredientDraft.price} onChange={(event) => setIngredientDraft({ ...ingredientDraft, price: event.target.value })} /></div>
+              </label>
+            </div>
+            <div className="modal-actions">
+              <button className="text-button" type="button" onClick={() => setIngredientModalOpen(false)}>Cancelar</button>
+              <button className="primary-button" type="submit"><Plus size={16} /> Salvar insumo</button>
+            </div>
+          </form>
+        </div>
+      )}
       <PackagingTable
         ingredients={ingredients}
         updateIngredient={updateIngredient}
