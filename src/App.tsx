@@ -69,6 +69,37 @@ type Gas = {
   pizzas: number;
 };
 
+const gasStorageKey = "della-nonna-gas";
+const defaultGas: Gas = {
+  price: 115,
+  weight: 13,
+  consumption: 0.7,
+  minutes: 180,
+  pizzas: 60,
+};
+
+const readStoredGas = (): { gas: Gas; gasIncluded: boolean } | null => {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(gasStorageKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<{ gas: Partial<Gas>; gasIncluded: boolean }>;
+    if (!parsed || typeof parsed !== "object") return null;
+    return {
+      gas: {
+        price: Number(parsed.gas?.price ?? defaultGas.price),
+        weight: Number(parsed.gas?.weight ?? defaultGas.weight),
+        consumption: Number(parsed.gas?.consumption ?? defaultGas.consumption),
+        minutes: Number(parsed.gas?.minutes ?? defaultGas.minutes),
+        pizzas: Number(parsed.gas?.pizzas ?? defaultGas.pizzas),
+      },
+      gasIncluded: Boolean(parsed.gasIncluded),
+    };
+  } catch {
+    return null;
+  }
+};
+
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const supabase =
@@ -228,14 +259,9 @@ function App() {
     oil: 30,
     yield: 5,
   });
-  const [gas, setGas] = useState<Gas>({
-    price: 115,
-    weight: 13,
-    consumption: 0.7,
-    minutes: 180,
-    pizzas: 60,
-  });
-  const [gasIncluded, setGasIncluded] = useState(false);
+  const persistedGas = readStoredGas();
+  const [gas, setGas] = useState<Gas>(() => persistedGas?.gas ?? defaultGas);
+  const [gasIncluded, setGasIncluded] = useState<boolean>(() => persistedGas?.gasIncluded ?? false);
   const [saved, setSaved] = useState(false);
   const [databaseError, setDatabaseError] = useState("");
   const [hydrated, setHydrated] = useState(!supabase);
@@ -411,6 +437,14 @@ function App() {
       mounted = false;
     };
   }, [session]);
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(
+        gasStorageKey,
+        JSON.stringify({ gas, gasIncluded }),
+      );
+    }
+  }, [gas, gasIncluded]);
   useEffect(() => {
     if (!supabase || !hydrated) return;
     void Promise.all([
