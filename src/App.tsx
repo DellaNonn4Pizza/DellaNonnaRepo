@@ -68,6 +68,40 @@ type Gas = {
   minutes: number;
   pizzas: number;
 };
+type MenuCategory = "Pizza" | "Esfiha" | "Bebida" | "Outro";
+type MenuItem = {
+  id: number;
+  dbId?: string;
+  nome_comercial: string;
+  ficha_tecnica_ref: string;
+  descricao: string;
+  categoria: MenuCategory;
+  tamanho: string;
+  imagem_url: string;
+  preco_venda: number;
+  disponivel: boolean;
+  destaque: boolean;
+  ordem_exibicao: number;
+  observacoes_internas: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
+const menuCategoryOptions: MenuCategory[] = ["Pizza", "Esfiha", "Bebida", "Outro"];
+const getMarginTone = (percentage: number) =>
+  percentage > 0.55 ? "good" : percentage >= 0.45 ? "warn" : "bad";
+const getMenuMarginSummary = (
+  item: Pick<MenuItem, "ficha_tecnica_ref" | "preco_venda">,
+  pizzas: Pizza[],
+  totalCost: (pizza: Pizza) => number,
+) => {
+  const recipe = pizzas.find((pizza) => pizza.name === item.ficha_tecnica_ref);
+  const cost = recipe ? totalCost(recipe) : 0;
+  const salePrice = Number(item.preco_venda ?? 0);
+  const margin = salePrice - cost;
+  const percentage = salePrice > 0 ? margin / salePrice : 0;
+  return { cost, margin, percentage, tone: getMarginTone(percentage) };
+};
 
 const gasStorageKey = "della-nonna-gas";
 const defaultGas: Gas = {
@@ -225,6 +259,31 @@ const savePricingToSupabase = async (pizza: Pizza) => {
   return dbId;
 };
 
+const saveMenuItemToSupabase = async (item: MenuItem) => {
+  if (!supabase) return item.dbId;
+  const payload = {
+    nome_comercial: item.nome_comercial,
+    ficha_tecnica_ref: item.ficha_tecnica_ref,
+    descricao: item.descricao || null,
+    categoria: item.categoria,
+    tamanho: item.tamanho || null,
+    imagem_url: item.imagem_url || null,
+    preco_venda: item.preco_venda,
+    disponivel: item.disponivel,
+    destaque: item.destaque,
+    ordem_exibicao: item.ordem_exibicao,
+    observacoes_internas: item.observacoes_internas || null,
+  };
+  if (item.dbId) {
+    const { error } = await supabase.from("cardapio_itens").update(payload).eq("id", item.dbId);
+    if (error) throw error;
+    return item.dbId;
+  }
+  const { data, error } = await supabase.from("cardapio_itens").insert(payload).select("id").single();
+  if (error) throw error;
+  return data?.id as string | undefined;
+};
+
 const schedulePricingSave = (pizza: Pizza) => {
   if (!supabase || !pizza.dbId) return;
   const currentTimer = pricingSaveTimers.get(pizza.id);
@@ -245,8 +304,9 @@ function App() {
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState("");
   const [activeSection, setActiveSection] = useState<
-    "insumos" | "fichas" | "precificacao"
+    "insumos" | "fichas" | "precificacao" | "cardapio"
   >("insumos");
+  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [ingredients, setIngredients] = useState(initialIngredients);
   const [pizzas, setPizzas] = useState(initialPizzas);
@@ -282,20 +342,30 @@ function App() {
     };
   }, []);
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    const route = window.location.pathname.replace(/^\/+|\/+$/g, "").split("/");
+    const page = route[1] || route[0];
+    if (page === "cardapio") setActiveSection("cardapio");
+    if (page === "precificacao") setActiveSection("precificacao");
+    if (page === "fichas") setActiveSection("fichas");
+    if (page === "insumos" || page === "admin") setActiveSection("insumos");
+  }, []);
+  useEffect(() => {
     if (!supabase || !session) return;
     setHydrated(false);
     let mounted = true;
     const hydrate = async () => {
-      const [ingredientsResponse, assumptionsResponse, recipesResponse, pricingResponse, doughResponse, gasResponse] = await Promise.all([
+      const [ingredientsResponse, assumptionsResponse, recipesResponse, pricingResponse, doughResponse, gasResponse, menuItemsResponse] = await Promise.all([
         supabase.from("insumos").select("*").order("created_at"),
         supabase.from("premissas_conversao").select("*"),
         supabase.from("fichas_tecnicas").select("*").order("ordem"),
         supabase.from("precificacao").select("*").order("pizza_nome"),
         supabase.from("receita_massa").select("*").order("ingrediente_nome"),
         supabase.from("gas").select("*").eq("id", true).maybeSingle(),
+        supabase.from("cardapio_itens").select("*").order("ordem_exibicao"),
       ]);
       if (!mounted) return;
-      const failedResponse = [ingredientsResponse, assumptionsResponse, recipesResponse, pricingResponse, doughResponse, gasResponse].find((response) => response.error);
+      const failedResponse = [ingredientsResponse, assumptionsResponse, recipesResponse, pricingResponse, doughResponse, gasResponse, menuItemsResponse].find((response) => response.error);
       if (failedResponse?.error) {
         console.error("Falha ao carregar dados do Supabase:", failedResponse.error);
         setDatabaseError(`Não foi possível carregar os dados: ${failedResponse.error.message}`);
@@ -309,6 +379,28 @@ function App() {
       const pricingRows = pricingResponse.data;
       const doughRows = doughResponse.data;
       const gasRows = gasResponse.data;
+      const menuRows = menuItemsResponse.data;
+      if (menuRows?.length) {
+        setMenuItems(
+          menuRows.map((row, index) => ({
+            id: index + 1,
+            dbId: row.id,
+            nome_comercial: row.nome_comercial,
+            ficha_tecnica_ref: row.ficha_tecnica_ref,
+            descricao: row.descricao ?? "",
+            categoria: row.categoria ?? "Outro",
+            tamanho: row.tamanho ?? "",
+            imagem_url: row.imagem_url ?? "",
+            preco_venda: Number(row.preco_venda ?? 0),
+            disponivel: row.disponivel ?? true,
+            destaque: Boolean(row.destaque),
+            ordem_exibicao: Number(row.ordem_exibicao ?? index + 1),
+            observacoes_internas: row.observacoes_internas ?? "",
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+          })),
+        );
+      }
       if (ingredientRows?.length) {
         const uniqueIngredients = new Map<string, (typeof ingredientRows)[number]>();
         ingredientRows.forEach((row) => {
@@ -630,6 +722,26 @@ function App() {
     }
     flashSaved();
   };
+  const saveMenuItem = async (item: MenuItem) => {
+    const dbId = await saveMenuItemToSupabase(item);
+    setMenuItems((items) => {
+      const existing = items.some((current) => current.id === item.id);
+      if (existing) {
+        return items.map((current) =>
+          current.id === item.id ? { ...item, dbId: dbId ?? item.dbId } : current,
+        );
+      }
+      return [...items, { ...item, dbId: dbId ?? item.dbId }];
+    });
+    flashSaved();
+  };
+  const deleteMenuItem = async (item: MenuItem) => {
+    setMenuItems((items) => items.filter((current) => current.id !== item.id));
+    if (supabase && item.dbId) {
+      await supabase.from("cardapio_itens").delete().eq("id", item.dbId);
+    }
+    flashSaved();
+  };
   const addPizza = () => {
     const pizza: Pizza = {
       id: Date.now(),
@@ -822,12 +934,19 @@ function App() {
               ["insumos", "Insumos", Settings2],
               ["fichas", "Fichas técnicas", Utensils],
               ["precificacao", "Precificação", TrendingUp],
+              ["cardapio", "Cardápio", Settings2],
             ] as const
           ).map(([id, label, Icon]) => (
             <button
               key={id}
               className={activeSection === id ? "nav-item active" : "nav-item"}
-              onClick={() => setActiveSection(id)}
+              onClick={() => {
+                setActiveSection(id);
+                if (typeof window !== "undefined") {
+                  const path = id === "insumos" ? "/admin" : `/admin/${id}`;
+                  window.history.pushState({}, "", path);
+                }
+              }}
             >
               <Icon size={17} />
               {label}
@@ -873,14 +992,18 @@ function App() {
                 ? "INSUMOS"
                 : activeSection === "fichas"
                   ? "FICHAS TÉCNICAS"
-                  : "PRECIFICAÇÃO"}
+                  : activeSection === "cardapio"
+                    ? "CARDÁPIO"
+                    : "PRECIFICAÇÃO"}
             </p>
             <h1>
               {activeSection === "insumos"
                 ? "Insumos e embalagens"
                 : activeSection === "fichas"
                   ? "Fichas técnicas"
-                  : "Precificação"}
+                  : activeSection === "cardapio"
+                    ? "Cardápio"
+                    : "Precificação"}
             </h1>
           </div>
           <div className="top-actions">
@@ -940,6 +1063,15 @@ function App() {
             gasCost={gasCost}
             gasIncluded={gasIncluded}
             setGasIncluded={setGasIncluded}
+          />
+        )}
+        {activeSection === "cardapio" && (
+          <MenuItemsView
+            items={menuItems}
+            pizzas={pizzas}
+            totalCost={totalCost}
+            saveItem={saveMenuItem}
+            deleteItem={deleteMenuItem}
           />
         )}
       </main>
@@ -1642,6 +1774,420 @@ function RecipesView({
           );
         })}
       </div>
+    </section>
+  );
+}
+
+function MenuItemsView({
+  items,
+  pizzas,
+  totalCost,
+  saveItem,
+  deleteItem,
+}: {
+  items: MenuItem[];
+  pizzas: Pizza[];
+  totalCost: (pizza: Pizza) => number;
+  saveItem: (item: MenuItem) => Promise<void>;
+  deleteItem: (item: MenuItem) => Promise<void>;
+}) {
+  const [categoryFilter, setCategoryFilter] = useState<"Todos" | MenuCategory>("Todos");
+  const [statusFilter, setStatusFilter] = useState<"Todos" | "Disponível" | "Indisponível">("Todos");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [modalOpen, setModalOpen] = useState(false);
+  const [draft, setDraft] = useState({
+    id: Date.now(),
+    dbId: undefined as string | undefined,
+    nome_comercial: "",
+    ficha_tecnica_ref: "",
+    descricao: "",
+    categoria: "Pizza" as MenuCategory,
+    tamanho: "",
+    imagem_url: "",
+    preco_venda: "0",
+    disponivel: true,
+    destaque: false,
+    ordem_exibicao: "1",
+    observacoes_internas: "",
+  });
+
+  const selectedRecipe = pizzas.find((pizza) => pizza.name === draft.ficha_tecnica_ref);
+  const previewCost = selectedRecipe ? totalCost(selectedRecipe) : 0;
+  const previewPrice = Number(draft.preco_venda || selectedRecipe?.salePrice || 0);
+  const previewMargin = previewPrice - previewCost;
+  const previewPercent = previewPrice > 0 ? previewMargin / previewPrice : 0;
+
+  const filteredItems = [...items]
+    .sort((left, right) => (left.ordem_exibicao ?? 0) - (right.ordem_exibicao ?? 0))
+    .filter((item) => {
+      const categoryMatches = categoryFilter === "Todos" || item.categoria === categoryFilter;
+      const statusMatches =
+        statusFilter === "Todos" ||
+        (statusFilter === "Disponível" && item.disponivel) ||
+        (statusFilter === "Indisponível" && !item.disponivel);
+      const term = searchTerm.trim().toLocaleLowerCase();
+      const textMatches =
+        !term ||
+        `${item.nome_comercial} ${item.descricao} ${item.ficha_tecnica_ref}`
+          .toLocaleLowerCase()
+          .includes(term);
+      return categoryMatches && statusMatches && textMatches;
+    });
+
+  const openNewItem = () => {
+    setDraft({
+      id: Date.now(),
+      dbId: undefined,
+      nome_comercial: "",
+      ficha_tecnica_ref: "",
+      descricao: "",
+      categoria: "Pizza",
+      tamanho: "",
+      imagem_url: "",
+      preco_venda: "0",
+      disponivel: true,
+      destaque: false,
+      ordem_exibicao: String(items.length + 1),
+      observacoes_internas: "",
+    });
+    setModalOpen(true);
+  };
+
+  const openEditItem = (item: MenuItem) => {
+    setDraft({
+      id: item.id,
+      dbId: item.dbId,
+      nome_comercial: item.nome_comercial,
+      ficha_tecnica_ref: item.ficha_tecnica_ref,
+      descricao: item.descricao,
+      categoria: item.categoria,
+      tamanho: item.tamanho,
+      imagem_url: item.imagem_url,
+      preco_venda: String(item.preco_venda ?? 0),
+      disponivel: item.disponivel,
+      destaque: item.destaque,
+      ordem_exibicao: String(item.ordem_exibicao || 1),
+      observacoes_internas: item.observacoes_internas,
+    });
+    setModalOpen(true);
+  };
+
+  const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file || !supabase) {
+      if (file) {
+        setDraft((current) => ({ ...current, imagem_url: URL.createObjectURL(file) }));
+      }
+      return;
+    }
+    const fileName = `cardapio/${Date.now()}-${file.name.replace(/\s+/g, "-")}`;
+    const { error } = await supabase.storage.from("cardapio").upload(fileName, file, { upsert: true });
+    if (error) {
+      console.error("Falha ao enviar imagem do cardápio:", error);
+      setDraft((current) => ({ ...current, imagem_url: URL.createObjectURL(file) }));
+      return;
+    }
+    const { data } = supabase.storage.from("cardapio").getPublicUrl(fileName);
+    setDraft((current) => ({ ...current, imagem_url: data.publicUrl }));
+  };
+
+  const submitItem = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const nomeComercial = draft.nome_comercial.trim();
+    const fichaRef = draft.ficha_tecnica_ref.trim();
+    if (!nomeComercial || !fichaRef) return;
+    const nextItem: MenuItem = {
+      id: draft.id,
+      dbId: draft.dbId,
+      nome_comercial: nomeComercial,
+      ficha_tecnica_ref: fichaRef,
+      descricao: draft.descricao.trim(),
+      categoria: draft.categoria,
+      tamanho: draft.tamanho.trim(),
+      imagem_url: draft.imagem_url,
+      preco_venda: Number(draft.preco_venda || 0),
+      disponivel: draft.disponivel,
+      destaque: draft.destaque,
+      ordem_exibicao: Number(draft.ordem_exibicao || 1),
+      observacoes_internas: draft.observacoes_internas.trim(),
+    };
+    await saveItem(nextItem);
+    setModalOpen(false);
+    setDraft({
+      id: Date.now(),
+      dbId: undefined,
+      nome_comercial: "",
+      ficha_tecnica_ref: "",
+      descricao: "",
+      categoria: "Pizza",
+      tamanho: "",
+      imagem_url: "",
+      preco_venda: "0",
+      disponivel: true,
+      destaque: false,
+      ordem_exibicao: String(items.length + 1),
+      observacoes_internas: "",
+    });
+  };
+
+  const reorderItem = async (item: MenuItem, direction: -1 | 1) => {
+    const ordered = [...items].sort((left, right) => (left.ordem_exibicao ?? 0) - (right.ordem_exibicao ?? 0));
+    const index = ordered.findIndex((current) => current.id === item.id);
+    const targetIndex = index + direction;
+    if (targetIndex < 0 || targetIndex >= ordered.length) return;
+    const target = ordered[targetIndex];
+    const nextItem = { ...item, ordem_exibicao: target.ordem_exibicao };
+    const nextTarget = { ...target, ordem_exibicao: item.ordem_exibicao };
+    await saveItem(nextItem);
+    await saveItem(nextTarget);
+  };
+
+  return (
+    <section className="page-section">
+      <div className="section-intro">
+        <div>
+          <p className="eyebrow orange">COMERCIAL</p>
+          <h2>Cardápio</h2>
+          <p className="section-description">
+            Transforme cada ficha em item do cardápio com preço, foto e status de disponibilidade.
+          </p>
+        </div>
+        <button className="primary-button" onClick={openNewItem}>
+          <Plus size={16} /> Novo item
+        </button>
+      </div>
+      <div className="table-card menu-table-card">
+        <div className="table-toolbar menu-toolbar">
+          <div>
+            <strong>Itens do cardápio</strong>
+            <span className="count-badge">{filteredItems.length} itens</span>
+          </div>
+          <div className="menu-filters">
+            <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value as "Todos" | MenuCategory)}>
+              <option value="Todos">Todas as categorias</option>
+              {menuCategoryOptions.map((category) => (
+                <option key={category} value={category}>{category}</option>
+              ))}
+            </select>
+            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as "Todos" | "Disponível" | "Indisponível")}>
+              <option value="Todos">Todos os status</option>
+              <option value="Disponível">Disponível</option>
+              <option value="Indisponível">Indisponível</option>
+            </select>
+            <label className="table-search compact-search">
+              <Search size={14} />
+              <input
+                value={searchTerm}
+                onChange={(event) => setSearchTerm(event.target.value)}
+                placeholder="Buscar item"
+              />
+            </label>
+          </div>
+        </div>
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th>Categoria</th>
+                <th>Preço</th>
+                <th>Status</th>
+                <th>Margem</th>
+                <th aria-label="Ações" />
+              </tr>
+            </thead>
+            <tbody>
+              {filteredItems.map((item) => {
+                const summary = getMenuMarginSummary(item, pizzas, totalCost);
+                return (
+                  <tr key={item.id}>
+                    <td>
+                      <div className="menu-item-cell">
+                        {item.imagem_url ? (
+                          <img src={item.imagem_url} alt={item.nome_comercial} className="menu-thumb" />
+                        ) : (
+                          <div className="menu-thumb placeholder-thumb">DN</div>
+                        )}
+                        <div>
+                          <strong>{item.nome_comercial}</strong>
+                          <small>{item.ficha_tecnica_ref}</small>
+                        </div>
+                      </div>
+                    </td>
+                    <td>{item.categoria}</td>
+                    <td>{money(item.preco_venda)}</td>
+                    <td>
+                      <span className={`menu-status ${item.disponivel ? "online" : "offline"}`}>
+                        {item.disponivel ? "Disponível" : "Indisponível"}
+                      </span>
+                    </td>
+                    <td>
+                      <span className={`margin-pill ${summary.tone}`}>
+                        {(summary.percentage * 100).toLocaleString("pt-BR", {
+                          minimumFractionDigits: 1,
+                          maximumFractionDigits: 1,
+                        })}
+                        %
+                      </span>
+                    </td>
+                    <td>
+                      <div className="row-actions compact-actions">
+                        <button className="row-action" title="Mover para cima" onClick={() => reorderItem(item, -1)}>
+                          <ChevronDown size={14} style={{ transform: "rotate(180deg)" }} />
+                        </button>
+                        <button className="row-action" title="Mover para baixo" onClick={() => reorderItem(item, 1)}>
+                          <ChevronDown size={14} />
+                        </button>
+                        <button className="row-action" title="Editar" onClick={() => openEditItem(item)}>
+                          <Pencil size={14} />
+                        </button>
+                        <button className="row-action" title="Excluir" onClick={() => void deleteItem(item)}>
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {modalOpen && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setModalOpen(false)}>
+          <form className="ingredient-modal menu-modal" onSubmit={submitItem} onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <p className="eyebrow orange">ITEM DO CARDÁPIO</p>
+                <h3>{draft.dbId ? "Editar item" : "Novo item"}</h3>
+              </div>
+              <button className="modal-close" type="button" onClick={() => setModalOpen(false)} aria-label="Fechar">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="menu-form-grid">
+              <label className="form-field form-field-wide">
+                Nome comercial
+                <input
+                  required
+                  value={draft.nome_comercial}
+                  onChange={(event) => setDraft((current) => ({ ...current, nome_comercial: event.target.value }))}
+                  placeholder="Ex.: Pizza Calabresa Especial"
+                />
+              </label>
+              <label className="form-field">
+                Ficha técnica vinculada
+                <select
+                  required
+                  value={draft.ficha_tecnica_ref}
+                  onChange={(event) => setDraft((current) => ({ ...current, ficha_tecnica_ref: event.target.value }))}
+                >
+                  <option value="">Selecione uma ficha</option>
+                  {pizzas.map((pizza) => (
+                    <option key={pizza.id} value={pizza.name}>{pizza.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="form-field">
+                Categoria
+                <select value={draft.categoria} onChange={(event) => setDraft((current) => ({ ...current, categoria: event.target.value as MenuCategory }))}>
+                  {menuCategoryOptions.map((category) => (
+                    <option key={category} value={category}>{category}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="form-field">
+                Tamanho
+                <input value={draft.tamanho} onChange={(event) => setDraft((current) => ({ ...current, tamanho: event.target.value }))} placeholder="Ex.: 35 cm" />
+              </label>
+              <label className="form-field">
+                Preço de venda
+                <div className="modal-price-input">
+                  <span>R$</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={draft.preco_venda}
+                    onChange={(event) => setDraft((current) => ({ ...current, preco_venda: event.target.value }))}
+                  />
+                </div>
+              </label>
+              <label className="form-field">
+                Ordem de exibição
+                <input type="number" min="1" value={draft.ordem_exibicao} onChange={(event) => setDraft((current) => ({ ...current, ordem_exibicao: event.target.value }))} />
+              </label>
+              <label className="form-field form-field-wide">
+                Descrição
+                <textarea value={draft.descricao} onChange={(event) => setDraft((current) => ({ ...current, descricao: event.target.value }))} rows={4} placeholder="Descreva o produto para o cliente" />
+              </label>
+              <label className="form-field form-field-wide">
+                Observações internas
+                <textarea value={draft.observacoes_internas} onChange={(event) => setDraft((current) => ({ ...current, observacoes_internas: event.target.value }))} rows={3} placeholder="Opcional" />
+              </label>
+              <div className="menu-image-panel form-field-wide">
+                <div className="menu-image-box">
+                  {draft.imagem_url ? (
+                    <img src={draft.imagem_url} alt="Pré-visualização do item" />
+                  ) : (
+                    <div className="placeholder-thumb large">DN</div>
+                  )}
+                </div>
+                <div className="menu-image-actions">
+                  <label className="primary-button upload-button">
+                    <Plus size={14} /> Upload de imagem
+                    <input type="file" accept="image/*" onChange={handleImageUpload} />
+                  </label>
+                  <span className="helper-copy">ou cole a URL em um campo futuro.</span>
+                </div>
+              </div>
+              <div className="menu-preview panel-block form-field-wide">
+                <strong>Preview da ficha vinculada</strong>
+                {selectedRecipe ? (
+                  <>
+                    <div className="preview-row">
+                      <span>Custo estimado</span>
+                      <strong>{money(previewCost)}</strong>
+                    </div>
+                    <div className="preview-row">
+                      <span>Preço sugerido</span>
+                      <strong>{money(selectedRecipe.salePrice)}</strong>
+                    </div>
+                    <div className="preview-row">
+                      <span>Margem atual</span>
+                      <strong>{money(previewMargin)}</strong>
+                    </div>
+                    <div className="preview-row">
+                      <span>Margem %</span>
+                      <span className={`margin-pill ${getMarginTone(previewPercent)}`}>
+                        {(previewPercent * 100).toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%
+                      </span>
+                    </div>
+                  </>
+                ) : (
+                  <p>Selecione uma ficha para visualizar custo e margem.</p>
+                )}
+              </div>
+              <div className="menu-toggle-row form-field-wide">
+                <label className="toggle-label compact-toggle">
+                  <input type="checkbox" checked={draft.disponivel} onChange={(event) => setDraft((current) => ({ ...current, disponivel: event.target.checked }))} />
+                  <span className="toggle" /> Disponível no cardápio
+                </label>
+                <label className="toggle-label compact-toggle">
+                  <input type="checkbox" checked={draft.destaque} onChange={(event) => setDraft((current) => ({ ...current, destaque: event.target.checked }))} />
+                  <span className="toggle" /> Destaque
+                </label>
+              </div>
+            </div>
+            <div className="modal-actions">
+              <button className="text-button" type="button" onClick={() => setModalOpen(false)}>Cancelar</button>
+              <button className="primary-button" type="submit">
+                <Save size={16} /> Salvar item
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </section>
   );
 }
